@@ -1,6 +1,18 @@
 # Accelerated Model-based T1, T2* and Proton Density Mapping 
 An approximate message passing (AMP) framework is proposed to recover T1, T2* and proton density maps from undersampled measurements. The proposed AMP-PE approach combines information from both the sparse prior and signal model prior, it treats the parameters as unknown varialbes and automatically estimates them.
 
+* If you use this code and find it helpful, please cite the above paper. Thanks :smile:
+```
+@ARTICLE{QSM_AMP_PE:2023,
+    author    = {Shuai Huang and James J. Lah and Jason W. Allen and Deqiang Qiu},
+    title     = {Model-based T1, T2* and Proton Density Mapping Using a Bayesian Approach with Parameter Estimation and Complementary Undersampling Patterns},
+    journal   = {arXiv preprint},
+    volume    = {arXiv:2307.02015},
+    year      = {2023},
+    url       = {https://arxiv.org/abs/2307.02015},
+}
+```
+
 
 ## Summary
 ```
