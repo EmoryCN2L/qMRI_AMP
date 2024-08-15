@@ -32,7 +32,7 @@ The datasets need to be placed in the data folder. We first define the following
 ## Usage
 You can follow the following steps to run the program. 
 
-`Detailed comments` are in the demo file "qmri_amp.m".
+`Detailed comments` are in the demo file "qmri_amp_gpu.m".
 
 * Step 0) Prepare the dataset in the correct format as detailed above. It should be easy to organize your own dataset in a similar format.
 
@@ -41,6 +41,6 @@ You can follow the following steps to run the program.
 * Step 2) Open `MATLAB` and type the following commands into the console:
 ```
     >> addpath('./src')
-    >> qmri_amp	% this is the demo file, look inside for detail comments
+    >> qmri_amp_gpu	% this is the demo file, look inside for detail comments
 ```
 * Step 3) The recovered quantitative maps and VFA multi-echo images are saved in the MAT-file "rec_qmri.mat"

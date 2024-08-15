@@ -1,4 +1,4 @@
-classdef A_2_echo_fa_comp_3d_cylinder_LinTrans < LinTrans
+classdef A_2_echo_fa_comp_3d_LinTrans < LinTrans
 	% FxnhandleLinTrans:  Linear transform class for function handles. 
     % sampling_vect different per echo and per flip angles
 
@@ -28,7 +28,7 @@ classdef A_2_echo_fa_comp_3d_cylinder_LinTrans < LinTrans
 	methods
 
 		% Constructor
-		function obj = A_2_echo_fa_comp_3d_cylinder_LinTrans(M,N,maps,mat_sz,sm_num,echo_num,coil_num,fa_num,wav_coef_len,s_vect,Psit,Psi,E,Et,A,Ah,S,St)
+		function obj = A_2_echo_fa_comp_3d_LinTrans(M,N,maps,mat_sz,sm_num,echo_num,coil_num,fa_num,wav_coef_len,s_vect,Psit,Psi,E,Et,A,Ah,S,St)
 			obj = obj@LinTrans;
 
 			% manditory inputs
@@ -114,33 +114,46 @@ classdef A_2_echo_fa_comp_3d_cylinder_LinTrans < LinTrans
 
 		% Matrix multiply
 		function y = mult(obj,x)
-			y=zeros([obj.mat_sz(1) obj.sm_num obj.echo_num obj.coil_num obj.fa_num]);
+			y=zeros([obj.mat_sz(1) obj.sm_num obj.coil_num obj.echo_num obj.fa_num]);
+            x = gpuArray(x);
+            maps = gpuArray(obj.maps);
             for (f=1:obj.fa_num)
 			for (j=1:obj.echo_num)
-                x_tmp = obj.Psit(obj.E(x(:,j,f)));
-				for (k=1:obj.coil_num)
-					y(:,:,j,k,f) = obj.A(obj.maps(:,:,:,k).*x_tmp, obj.s_vect(:,j,f));
-				end
+                x_tmp = obj.Psit(obj.E( x(:,j,f) ));
+				%for (k=1:obj.coil_num)
+				%	y(:,:,j,k,f) = obj.A(obj.maps(:,:,:,k).*x_tmp, obj.s_vect(:,j,f));
+				%end
+                y(:,:,:,j,f) = obj.A(maps.*x_tmp, obj.s_vect(:,j,f));
 			end
             end
+            y = gather(y);
+            clear x maps x_tmp;
 		end
 
 		% Hermitian-transposed-Matrix multiply 
 		function x = multTr(obj,y)
 			x_tmp = zeros([obj.mat_sz obj.echo_num obj.fa_num]);
+            y = gpuArray(y);
+            maps_conj = gpuArray(obj.maps_conj);
             for (f=1:obj.fa_num)
 			for (j=1:obj.echo_num)
-				for (k=1:obj.coil_num)
-					x_tmp(:,:,:,j,f) = x_tmp(:,:,:,j,f) + obj.mat_sz(1)*obj.mat_sz(2)*obj.mat_sz(3)*obj.maps_conj(:,:,:,k).*obj.Ah(y(:,:,j,k,f), obj.s_vect(:,j,f));
-				end
+				%for (k=1:obj.coil_num)
+				%	x_tmp(:,:,:,j,f) = x_tmp(:,:,:,j,f) + obj.mat_sz(1)*obj.mat_sz(2)*obj.mat_sz(3)*obj.maps_conj(:,:,:,k).*obj.Ah(y(:,:,j,k,f), obj.s_vect(:,j,f));
+				%end
+
+                x_tmp(:,:,:,j,f) = obj.Ah(maps_conj, y(:,:,:,j,f), obj.s_vect(:,j,f));
 			end
             end
+            x_tmp = obj.mat_sz(1)*obj.mat_sz(2)*obj.mat_sz(3)*x_tmp;
+
             x = zeros([obj.wav_coef_len obj.echo_num obj.fa_num]);
             for (f=1:obj.fa_num)
             for (j=1:obj.echo_num)
                 x(:,j,f) = obj.Et(obj.Psi(x_tmp(:,:,:,j,f)));
             end
             end
+            x = gather(x);
+            clear x_tmp y maps_conj;
 		end
 
 		% Squared-Matrix multiply 

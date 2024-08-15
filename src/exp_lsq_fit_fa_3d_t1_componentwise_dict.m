@@ -1,4 +1,4 @@
- function V=exponential_fit(x_mag, x0, r2star, t1_exp_dict, echo_time, sin_FA_scaled, cos_FA_scaled, tan_FA_scaled, LN_num )
+function V=exp_lsq_fit_fa_3d_t1_componentwise_dict(x_mag, x0, r2star, t1_exp_dict, echo_time, sin_FA_scaled, cos_FA_scaled, tan_FA_scaled)
  
     % solve the least square problem for R2 only while keeping x0 fixed
 
@@ -12,9 +12,19 @@
     % Assigning parameres according to par
  
     % maximum and minimum value of Rt_abs
- 
 
     %parpool(LN_num)
+
+    % convert all the inputs to gpuArrays
+    x_mag = gpuArray(x_mag);
+    x0 = gpuArray(x0);
+    r2star = gpuArray(r2star);
+    t1_exp_dict = gpuArray(t1_exp_dict);
+    echo_time = gpuArray(echo_time);
+    sin_FA_scaled = gpuArray(sin_FA_scaled);
+    cos_FA_scaled = gpuArray(cos_FA_scaled);
+    tan_FA_scaled = gpuArray(tan_FA_scaled);
+
 
     sx = size(x_mag,1);
     sy = size(x_mag,2);
@@ -32,7 +42,7 @@
     % initialize H, x0, and V
     x0 = max(x0, x0_min);
 
-    x0_process = zeros([sx sy sz Ne]);
+    x0_process = gpuArray(zeros([sx sy sz Ne]));
     for (i=1:Ne)
         x0_process(:,:,:,i) = x0.*exp(-echo_time(i)*r2star);
     end
@@ -41,47 +51,46 @@
     x_mag_sq_norm = squeeze(sum(x_mag.^2,4));   % sx sy sz Nf
     x_mag_sq_norm = squeeze(sum(x_mag_sq_norm,4));  % sx sy sz
     
-    min_distance_to_dict_all = zeros(sx,sy,sz,LN_num);
-    V_all = zeros(sx,sy,sz,LN_num);
 
     t1_exp_dict_len = length(t1_exp_dict);
-    t1_exp_dict_part = floor(t1_exp_dict_len/LN_num);
 
-    parfor (l_idx = 1:LN_num)
+    zero_gpu_temp = gpuArray(zeros(sx,sy,sz));
+    min_distance_to_dict_part = zero_gpu_temp;
+    V_part = zero_gpu_temp;
 
-    k_seq = ((l_idx-1)*t1_exp_dict_part + 1) : (l_idx * t1_exp_dict_part);
+    % permutation for a more efficient implementation
+    x_mag = permute(x_mag, [1 2 3 5 4]);
 
-    if (l_idx == LN_num)
-        k_seq = ((l_idx-1)*t1_exp_dict_part + 1) : t1_exp_dict_len;
-    end
-
-    min_distance_to_dict_part = zeros(sx,sy,sz);
-    V_part = zeros(sx,sy,sz);
-
-    for (k = k_seq)
+    for (k = 1:t1_exp_dict_len)
         %if (mod(k,500)==0)
         %fprintf('%d\n', k)
         %end
         t1_exp_dict_seq = t1_exp_dict(k);
-        t1_mut_mat = zeros(sx,sy,sz,Nf);
-        for (j=1:Nf)
-            t1_mut_mat(:,:,:,j) = (sin_FA_scaled(:,:,:,j)*(1-t1_exp_dict_seq))./(1-cos_FA_scaled(:,:,:,j)*t1_exp_dict_seq);
-        end
+        %t1_mut_mat = zeros(sx,sy,sz,Nf);
+        %for (j=1:Nf)
+        %    t1_mut_mat(:,:,:,j) = (sin_FA_scaled(:,:,:,j)*(1-t1_exp_dict_seq))./(1-cos_FA_scaled(:,:,:,j)*t1_exp_dict_seq);
+        %end
+
+        t1_mut_mat = (sin_FA_scaled*(1-t1_exp_dict_seq))./(1-cos_FA_scaled*t1_exp_dict_seq);
         t1_mut_sq = squeeze(sum(t1_mut_mat.^2,4));
 
-        distance_to_dict = zeros(sx,sy,sz);
+        distance_to_dict = zero_gpu_temp;
 
         for (i=1:Ne)
-            distance_to_dict_tmp = zeros(sx,sy,sz);
-            for (j=1:Nf)
-                distance_to_dict_tmp = distance_to_dict_tmp + x_mag(:,:,:,i,j).*t1_mut_mat(:,:,:,j);
-            end
+
+            % the following is the implementation when we do not permute x_mag 
+            %distance_to_dict_tmp = zeros(sx,sy,sz);
+            %for (j=1:Nf)
+            %    distance_to_dict_tmp = distance_to_dict_tmp + x_mag(:,:,:,i,j).*t1_mut_mat(:,:,:,j);
+            %end
+
+            distance_to_dict_tmp = sum(x_mag(:,:,:,:,i).*t1_mut_mat, 4);
             distance_to_dict = distance_to_dict + x0_process(:,:,:,i).*distance_to_dict_tmp;
         end
         distance_to_dict = x_mag_sq_norm + x0_process_sq_norm.*t1_mut_sq - 2*distance_to_dict;
         
-        if (k==k_seq(1))
-            V_part = repmat(t1_exp_dict(k),[sx sy sz]);
+        if (k==1)
+            V_part = gpuArray(repmat(t1_exp_dict(k),[sx sy sz]));
             min_distance_to_dict_part = distance_to_dict;
         else
             V_part(min_distance_to_dict_part>distance_to_dict) = t1_exp_dict(k);
@@ -89,21 +98,9 @@
         end            
     end
 
-    V_all(:,:,:,l_idx) = V_part;
-    min_distance_to_dict_all(:,:,:,l_idx) = min_distance_to_dict_part;
-
-    end
-
-    min_distance_to_dict = min_distance_to_dict_all(:,:,:,1);
-    V = V_all(:,:,:,1);
-
-    for (l_idx=2:LN_num)
-        V_tmp = V_all(:,:,:,l_idx);
-        V(min_distance_to_dict>min_distance_to_dict_all(:,:,:,l_idx)) = V_tmp(min_distance_to_dict>min_distance_to_dict_all(:,:,:,l_idx));
-        min_distance_to_dict = min(min_distance_to_dict, min_distance_to_dict_all(:,:,:,l_idx));
-    end
-
-    %poolobj = gcp('nocreate');  % close parallel pool
-    %delete(poolobj);
+    V = gather(V_part);
+    
+    g_device = gpuDevice;
+    reset(g_device);
 
 end

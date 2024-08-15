@@ -1,7 +1,6 @@
-function [res, input_par, output_par] = gamp_mri_full_x0_r2star_l1_3d_nw_com_com_spar_ahead(A_2_echo_fa_comp_3d, A_wav_fa_3d, y, gamp_par, input_par, output_par)
+function [res, input_par, output_par] = gamp_mri_x0_r2star_comp_fa_echo_3d_model_spar(A_2_echo_nw_fa_comp_3d, A_wav_fa_3d, A_wav_single_3d, y, gamp_par, input_par, output_par)
 
-    % use the same model as the sparsity promoting recovery
-    % no wavelet in A_2_echo_fa_comp_3d
+    % no wavelet in A_2_echo_nw_fa_comp_3d
     % did not embed parameter estimation, move estimation of x_hat_all to the last step
     % now embed parameter estimation
 
@@ -18,8 +17,8 @@ function [res, input_par, output_par] = gamp_mri_full_x0_r2star_l1_3d_nw_com_com
 
     % enforce positive constraint on the r2star
 	% set GAMP parameters
+	max_search_ite = gamp_par.max_search_ite;
 	max_spar_mod_ite = gamp_par.max_spar_mod_ite;
-    max_search_ite = gamp_par.max_search_ite;
     max_spar_ite = gamp_par.max_spar_ite;
     max_pe_est_ite = gamp_par.max_pe_est_ite;
 	cvg_thd = gamp_par.cvg_thd;
@@ -71,100 +70,13 @@ function [res, input_par, output_par] = gamp_mri_full_x0_r2star_l1_3d_nw_com_com
     %% initialize tau_w_exp with tau_x_mag_meas from the warm up step %%
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    %% first finish the sparse reconstruction %%
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
     tau_x_mag_meas_1 = A_wav_fa_3d.multSq(tau_x_meas_psi);
     x_mag_meas_1_complex = A_wav_fa_3d.mult(x_hat_meas_psi);
 
 
-    %%%%%%%%%%%%%%%%
-    %% use the recovered signal from previous step as the initialization
-    %%%%%%%%%%%%%%%%
-    x_hat_init = x_mag_meas_1_complex;
-
-    %% compute the estimation of X0 and R2star
-    % set parallel pool
-    parpool(LN_num, 'IdleTimeout', Inf)
-    % First estimate the T1
-    warning('off','all')
-    ET1 = zeros(sx,sy,sz);
-    parfor (idx_x=1:sx) % parallel computing need to be set at the outer loop other wise it will be too slow
-        fprintf('%d\n',idx_x)
-        warning('off','all')
-        for (idx_y=1:sy)
-            for (idx_z=1:sz)
-                T_mat = zeros(Nf*Ne,Ne+1);
-                s_sin_seq = zeros(Nf*Ne,1);
-                for (j=1:Ne)
-                    s_seq = abs(squeeze(x_hat_init(idx_x,idx_y,idx_z,j,:)));
-                    fa_tan_seq = squeeze(tan_FA_scaled(idx_x,idx_y,idx_z,:));
-                    fa_sin_seq = squeeze(sin_FA_scaled(idx_x,idx_y,idx_z,:));
-                    T_mat(((j-1)*Nf+1):(j*Nf),1) = s_seq./fa_tan_seq;
-                    T_mat(((j-1)*Nf+1):(j*Nf),1+j) = 1;
-                    s_sin_seq(((j-1)*Nf+1):(j*Nf)) = s_seq./fa_sin_seq;
-                end
-                T_mat = inv(T_mat'*T_mat)*T_mat';
-                ET1_PDStar_seq = T_mat*s_sin_seq;
-                ET1(idx_x,idx_y,idx_z) = ET1_PDStar_seq(1);
-            end
-        end
-    end 
-
-    ET1 = min(ET1, 1-eps);
-    ET1 = max(ET1, eps);
-
-
-    % Finally Estimate the PD and R2Star
-    Et = abs(x_hat_init);
-    Et(Et<eps) = eps;
-    Et_log = log(Et);
-
-    H = zeros(sx,sy,sz);
-    R2_star = zeros(sx,sy,sz);
-    parfor (idx_x=1:sx) % parallel computing need to be set at the outer loop other wise it will be too slow
-        fprintf('%d\n',idx_x)
-        warning('off','all')
-        for (idx_y=1:sy)
-            for (idx_z=1:sz)
-                T_mat = [repmat(1, Ne*Nf, 1) repmat(-echo_time, [Nf 1])];
-                Et_tmp = squeeze(Et(idx_x,idx_y,idx_z,:,:));
-                Et_tmp = Et_tmp(:);
-                T_mat(:,1) = T_mat(:,1).*Et_tmp;
-                T_mat(:,2) = T_mat(:,2).*Et_tmp;
-
-                Et_log_tmp_1 = squeeze(Et_log(idx_x,idx_y,idx_z,:,:));
-                Et_log_tmp_1 = Et_log_tmp_1(:);
-                Et_log_tmp_2_tmp = (squeeze(sin_FA_scaled(idx_x,idx_y,idx_z,:))*(1-ET1(idx_x,idx_y,idx_z)))./(1-squeeze(cos_FA_scaled(idx_x,idx_y,idx_z,:))*ET1(idx_x,idx_y,idx_z));
-                Et_log_tmp_2 = zeros(Ne*Nf, 1); 
-                for (f=1:Nf)
-                    Et_log_tmp_2(((f-1)*Ne+1):(f*Ne),1) = repmat(Et_log_tmp_2_tmp(f), [Ne 1]);
-                end
-                Et_log_tmp_2(Et_log_tmp_2<eps) = eps;
-                Et_log_tmp_2 = log(Et_log_tmp_2);
-                Et_log_tmp = Et_log_tmp_1-Et_log_tmp_2;
-                Et_log_tmp = Et_log_tmp.*Et_tmp;
-                T_mat=inv(T_mat'*T_mat)*T_mat';
-                H_R2_star_seq = T_mat*Et_log_tmp;
-                H(idx_x,idx_y,idx_z)=H_R2_star_seq(1);
-                R2_star(idx_x,idx_y,idx_z)=H_R2_star_seq(2);
-            end
-        end
-    end
-
-    % to avoid running into erros while doing parpool, just keep it running in the background and do not delete it
-    %poolobj = gcp('nocreate');  % close parallel pool
-    %delete(poolobj);
-    warning('on','all')
-
-    H_exp = exp(H);
-    H_exp = min(H_exp, x0_max); 
-    H_exp = max(H_exp, x0_min);
-
-
-    R2_star = min(R2_star, r2star_max);
-    R2_star = max(R2_star, r2star_min); 
+    ET1 = gamp_par.ET1;
+    H_exp = gamp_par.H_exp;
+    R2_star = gamp_par.R2_star;
 
     x0 = H_exp;
     r2star = R2_star;
@@ -173,10 +85,11 @@ function [res, input_par, output_par] = gamp_mri_full_x0_r2star_l1_3d_nw_com_com
     %% warm up the iterations %%
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-    ET1_mut_mat = zeros(sx,sy,sz,Nf);
-    for (k=1:Nf)
-        ET1_mut_mat(:,:,:,k) = (sin_FA_scaled(:,:,:,k).*(1-ET1))./(1-cos_FA_scaled(:,:,:,k).*ET1);
-    end 
+    %ET1_mut_mat = zeros(sx,sy,sz,Nf);
+    %for (k=1:Nf)
+    %    ET1_mut_mat(:,:,:,k) = (sin_FA_scaled(:,:,:,k).*(1-ET1))./(1-cos_FA_scaled(:,:,:,k).*ET1);
+    %end 
+    ET1_mut_mat = (sin_FA_scaled.*(1-ET1))./(1-cos_FA_scaled.*ET1);
 
     R2_mut_mat  =zeros(sx,sy,sz,Ne);
     for (j=1:Ne)
@@ -192,63 +105,8 @@ function [res, input_par, output_par] = gamp_mri_full_x0_r2star_l1_3d_nw_com_com
 
     p_hat_psi = x_mag_meas_1_complex;
     tau_p_psi = tau_x_mag_meas_1;
-    x_hat_all_tmp = x_mag_meas_1_complex;
 
     x_hat_psi = x_hat_meas_psi;
-
-    % do an exponential fit of the tissue parameters
-    x_mag_meas = abs(x_mag_meas_1_complex);
-
-    for (iii=1:3)
-            x0_new = zeros(sx,sy,sz);
-            x0_new_denominator = zeros(sx,sy,sz);
-            for (j=1:Ne)
-                for (k=1:Nf)
-                    T_tmp = R2_mut_mat(:,:,:,j) .* ET1_mut_mat(:,:,:,k);
-                    x0_new = x0_new + T_tmp .* x_mag_meas(:,:,:,j,k);
-                    x0_new_denominator = x0_new_denominator + T_tmp.^2;
-                end
-            end
-            x0_new_denominator(x0_new_denominator==0) = eps;
-            x0_tmp = x0_new ./ x0_new_denominator;
-
-
-            x0_tmp = min(x0_tmp, x0_max);
-            x0_tmp = max(x0_tmp, x0_min);
-            x0_pre = x0;
-            x0 = x0_tmp;
-
-            cvg_x0 = norm(x0(:)-x0_pre(:), 'fro')/norm(x0(:), 'fro');
-
-            r2star = exp_lsq_fit_fa_3d_r2_componentwise_dict_parfor(x_mag_meas, x0, ET1, r2_exp_dict, r2_exp_dict_sq_norm, r2_dict_val, echo_time, sin_FA_scaled, cos_FA_scaled, tan_FA_scaled, LN_num);
-            r2star = min(r2star, r2star_max);
-            r2star = max(r2star, r2star_min);
-
-
-            ET1 = exp_lsq_fit_fa_3d_t1_componentwise_dict_parfor(x_mag_meas, x0, r2star, t1_exp_dict, echo_time,           sin_FA_scaled, cos_FA_scaled, tan_FA_scaled, LN_num);
-            ET1 = min(ET1, 1-eps);
-            ET1 = max(ET1, eps);
-
-            ET1_mut_mat = zeros(sx,sy,sz,Nf);
-            for (k=1:Nf)
-                ET1_mut_mat(:,:,:,k) = (sin_FA_scaled(:,:,:,k).*(1-ET1))./(1-cos_FA_scaled(:,:,:,k).*ET1);
-            end
-
-            R2_mut_mat  =zeros(sx,sy,sz,Ne);
-            for (j=1:Ne)
-                R2_mut_mat(:,:,:,j) = exp(-echo_time(j)*r2star);
-            end
-    end
-
-    %%% compute tau_x_hat_all and x_hat_all
-    x_mag_exp = zeros(size(x_mag_meas));
-    for (j=1:Ne)
-        for (k=1:Nf)
-            x_mag_exp(:,:,:,j,k) = x0 .* R2_mut_mat(:,:,:,j) .* ET1_mut_mat(:,:,:,k);
-        end 
-    end
-    x_mag_exp = min(x_mag_exp, x_mag_max);
-    x_mag_exp = max(x_mag_exp, x_mag_min);
 
     cvg_x0 = 1; 
     cvg_x_hat_all = 1;
@@ -260,15 +118,17 @@ function [res, input_par, output_par] = gamp_mri_full_x0_r2star_l1_3d_nw_com_com
 
 	for (ite_pe = 1:max_spar_mod_ite)
 
-        %tic
+
+		for (ite_gamp = 1:max_search_ite)
 
 		    % give fixed magnitude measurements
 		    % should i let it run until convergence
 
+            if (mod(ite_pe,2)==0)
 
             %%% iteration in the measurement block
-            tau_p_meas_2 = A_2_echo_fa_comp_3d.multSq(tau_x_meas_psi);
-            p_hat_meas_2 = A_2_echo_fa_comp_3d.mult(x_hat_meas_psi) - tau_p_meas_2 * s_hat_meas_2;
+            tau_p_meas_2 = A_2_echo_nw_fa_comp_3d.multSq(tau_x_hat_all);
+            p_hat_meas_2 = A_2_echo_nw_fa_comp_3d.mult(x_hat_all) - tau_p_meas_2 * s_hat_meas_2;
 
             fprintf('%d\n', mean(tau_p_meas_2(:)))
 
@@ -279,38 +139,53 @@ function [res, input_par, output_par] = gamp_mri_full_x0_r2star_l1_3d_nw_com_com
             tau_s_meas_2 = 1 / (tau_w_2 + tau_p_meas_2);
             s_hat_meas_2 = (y - p_hat_meas_2) * tau_s_meas_2;
 
-            tau_r_meas_2 = 1 / A_2_echo_fa_comp_3d.multSqTr(tau_s_meas_2);
-            r_hat_meas_2 = x_hat_meas_psi + tau_r_meas_2 * A_2_echo_fa_comp_3d.multTr(s_hat_meas_2);
+            tau_r_meas_2 = 1 / A_2_echo_nw_fa_comp_3d.multSqTr(tau_s_meas_2);
+            r_hat_meas_2 = x_hat_all + tau_r_meas_2 * A_2_echo_nw_fa_comp_3d.multTr(s_hat_meas_2);
+
+            %%%%%%%%%%
+            %% the sparse prior
+            %%%%%%%%%%
+            
+            tau_s_psi = 1 /(tau_r_meas_2 + tau_p_psi);
+            s_hat_psi = (r_hat_meas_2 - p_hat_psi) * tau_s_psi;
+
+            tau_r_psi = 1 / A_wav_fa_3d.multSqTr(tau_s_psi);
+            r_hat_psi = x_hat_psi + tau_r_psi * A_wav_fa_3d.multTr(s_hat_psi);
 
             for (ite_pe_est = 1:max_pe_est_ite)
-                for (i=1:size(r_hat_meas_2,2))
-                for (j=1:size(r_hat_meas_2,3))
-                    lambda_x_hat_psi(i,j) = input_parameter_est(abs(r_hat_meas_2(:,i,j)), tau_r_meas_2, lambda_x_hat_psi(i,j), kappa);
+                for (i=1:size(r_hat_psi,2))
+                for (j=1:size(r_hat_psi,3))
+                    lambda_x_hat_psi(i,j) = input_parameter_est(abs(r_hat_psi(:,i,j)), tau_r_psi, lambda_x_hat_psi(i,j), kappa);
                 end
                 end
             end
 
-            x_hat_meas_psi_pre = x_hat_meas_psi;
-            tau_x_meas_psi_tmp = zeros(size(r_hat_meas_2,2), size(r_hat_meas_2,3));
-            for (i=1:size(r_hat_meas_2,2))
-            for (j=1:size(r_hat_meas_2,3))
-                [x_hat_meas_psi(:,i,j), tau_x_meas_psi_tmp(i,j)] = input_function(r_hat_meas_2(:,i,j), tau_r_meas_2, lambda_x_hat_psi(i,j));
+            x_hat_psi_pre = x_hat_psi;
+            tau_x_hat_psi_tmp = zeros(size(r_hat_psi,2), size(r_hat_psi,3));
+            for (i=1:size(r_hat_psi,2))
+            for (j=1:size(r_hat_psi,3))
+                [x_hat_psi(:,i,j), tau_x_hat_psi_tmp(i,j)] = input_function(r_hat_psi(:,i,j), tau_r_psi, lambda_x_hat_psi(i,j));
             end
             end
-            tau_x_meas_psi = mean(tau_x_meas_psi_tmp(:));
+            tau_x_hat_psi = mean(tau_x_hat_psi_tmp(:));
             %x_hat_psi = x_hat_psi_pre + damp_rate*(x_hat_psi-x_hat_psi_pre);
 
-            %tau_x_hat_all_tmp = A_wav_fa_3d.multSq(tau_x_meas_psi);
-            x_hat_all_tmp = A_wav_fa_3d.mult(x_hat_meas_psi);
+            tau_p_psi = A_wav_fa_3d.multSq(tau_x_hat_psi);
+            p_hat_psi = A_wav_fa_3d.mult(x_hat_psi) - tau_p_psi * s_hat_psi;
 
-
+            end
 
             %%%%%%%%%
             %% estimate the parameters based on x_hat_all
             %%%%%%%%%
-            for (ite_search = 1:max_search_ite)
+            if (mod(ite_pe,2)==1)
+            
+            if (ite_pe==1)
+                x_mag_meas_complex = x_mag_meas_1_complex;
+            else
+                x_mag_meas_complex = (tau_p_psi*r_hat_meas_2+tau_r_meas_2*p_hat_psi) / (tau_p_psi+tau_r_meas_2);
+            end
 
-            x_mag_meas_complex = x_hat_all_tmp;
             x_mag_meas = abs(x_mag_meas_complex);
             x_mag_meas(x_mag_meas<x_mag_min) = x_mag_min;
 
@@ -330,24 +205,25 @@ function [res, input_par, output_par] = gamp_mri_full_x0_r2star_l1_3d_nw_com_com
 
             x0_tmp = min(x0_tmp, x0_max);
             x0_tmp = max(x0_tmp, x0_min);
-            x0_pre = x0;
+
+            cvg_x0 = norm(x0(:)-x0_tmp(:), 'fro')/norm(x0(:), 'fro');
+
             x0 = x0_tmp;
 
-            cvg_x0 = norm(x0(:)-x0_pre(:), 'fro')/norm(x0(:), 'fro');
-
-            r2star = exp_lsq_fit_fa_3d_r2_componentwise_dict_parfor(x_mag_meas, x0, ET1, r2_exp_dict, r2_exp_dict_sq_norm, r2_dict_val, echo_time, sin_FA_scaled, cos_FA_scaled, tan_FA_scaled, LN_num);
+            r2star = exp_lsq_fit_fa_3d_r2_componentwise_dict(x_mag_meas, x0, ET1, r2_exp_dict, r2_exp_dict_sq_norm, r2_dict_val, echo_time, sin_FA_scaled, cos_FA_scaled, tan_FA_scaled);
             r2star = min(r2star, r2star_max);
             r2star = max(r2star, r2star_min);
 
 
-            ET1 = exp_lsq_fit_fa_3d_t1_componentwise_dict_parfor(x_mag_meas, x0, r2star, t1_exp_dict, echo_time, sin_FA_scaled, cos_FA_scaled, tan_FA_scaled, LN_num);
+            ET1 = exp_lsq_fit_fa_3d_t1_componentwise_dict(x_mag_meas, x0, r2star, t1_exp_dict, echo_time, sin_FA_scaled, cos_FA_scaled, tan_FA_scaled);
             ET1 = min(ET1, 1-eps);
             ET1 = max(ET1, eps);
 
-            ET1_mut_mat = zeros(sx,sy,sz,Nf);
-            for (k=1:Nf)
-                ET1_mut_mat(:,:,:,k) = (sin_FA_scaled(:,:,:,k).*(1-ET1))./(1-cos_FA_scaled(:,:,:,k).*ET1);
-            end
+            %ET1_mut_mat = zeros(sx,sy,sz,Nf);
+            %for (k=1:Nf)
+            %    ET1_mut_mat(:,:,:,k) = (sin_FA_scaled(:,:,:,k).*(1-ET1))./(1-cos_FA_scaled(:,:,:,k).*ET1);
+            %end
+            ET1_mut_mat = (sin_FA_scaled.*(1-ET1))./(1-cos_FA_scaled.*ET1);
 
             R2_mut_mat  =zeros(sx,sy,sz,Ne);
             for (j=1:Ne)
@@ -366,30 +242,36 @@ function [res, input_par, output_par] = gamp_mri_full_x0_r2star_l1_3d_nw_com_com
 
             end
 
+            if (mod(ite_pe,2)==0)
             %%%% update the magnitude of x_hat_all with the fitted model parameters
-            x_hat_all_pre = x_hat_all;
-            x_hat_all = x_mag_exp .* sign(x_hat_all_tmp);
-
-            x_hat_meas_psi_pre = x_hat_meas_psi;
-            x_hat_meas_psi = A_wav_fa_3d.multTr(x_hat_all);
+            x_exp_complex = x_mag_exp .* sign(p_hat_psi);
+            tau_x_exp_complex = tau_p_psi;
 
             % combine with r_hat_meas_2 and tau_r_meas_2
+            tau_x_hat_all_pre = tau_x_hat_all;
+            tau_x_hat_all = (tau_x_exp_complex*tau_r_meas_2)/(tau_x_exp_complex+tau_r_meas_2);
+            %tau_x_hat_all = tau_x_hat_all_pre + damp_rate*(tau_x_hat_all-tau_x_hat_all_pre);
 
-            cvg_x_hat_all = norm(x_hat_meas_psi(:)-x_hat_meas_psi_pre(:), 'fro')/norm(x_hat_meas_psi(:), 'fro');
+            x_hat_all_pre = x_hat_all;
+            % preliminary update of x_hat_all without the parametric model
+            x_hat_all = (tau_x_exp_complex*r_hat_meas_2+tau_r_meas_2*x_exp_complex) / (tau_x_exp_complex+tau_r_meas_2);
+
+            cvg_x_hat_all = norm(x_hat_all(:)-x_hat_all_pre(:), 'fro')/norm(x_hat_all(:), 'fro');
+
+            end
 
 		    cvg_gamp = max([cvg_x0 cvg_x_hat_all]);
 		    if ((cvg_gamp<cvg_thd) && (ite_gamp>2))
 		    	break;
 		    end
 
+
             fprintf('Ite %d CVG PE: %d\t%d\n', ite_pe, cvg_x0, cvg_x_hat_all)
 		    
+		end
 
-        %toc
 
-        tau_w_2
-
-        %fprintf('Ite %d CVG PE: %d\t%d\n', ite_pe, cvg_x0, cvg_x_hat_all)
+        fprintf('Ite %d CVG PE: %d\t%d\n', ite_pe, cvg_x0, cvg_x_hat_all)
 
         cvg_pe = max([ cvg_x0 cvg_x_hat_all ]);
         if ((cvg_pe<cvg_thd)&&(ite_pe>2))
@@ -407,6 +289,7 @@ function [res, input_par, output_par] = gamp_mri_full_x0_r2star_l1_3d_nw_com_com
 
 
     input_par.lambda_x_hat_psi = lambda_x_hat_psi;
+    output_par.tau_w_1 = tau_w_1;
     output_par.tau_w_2 = tau_w_2;
 
 end

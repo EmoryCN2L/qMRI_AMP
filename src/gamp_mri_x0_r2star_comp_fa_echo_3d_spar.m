@@ -1,4 +1,4 @@
-function [res, input_par, output_par] = gamp_mri_full_x0_r2star_l1_3d_nw_com_com_spar_ahead(A_2_echo_fa_comp_3d, y, gamp_par, input_par, output_par)
+function [res, input_par, output_par] = gamp_mri_x0_r2star_comp_fa_echo_3d_spar(A_2_echo_fa_comp_3d, y, gamp_par, input_par, output_par)
 
     % no wavelet in A_2_echo_nw_3d
     % did not embed parameter estimation, move estimation of x_hat_all to the last step
@@ -62,7 +62,7 @@ function [res, input_par, output_par] = gamp_mri_full_x0_r2star_l1_3d_nw_com_com
             tau_p_meas_1 = A_2_echo_fa_comp_3d.multSq(tau_x_meas_psi);
             p_hat_meas_1 = A_2_echo_fa_comp_3d.mult(x_hat_meas_psi) - tau_p_meas_1 * s_hat_meas_1;
 
-            fprintf('%d\n', mean(tau_p_meas_1(:)))
+            %fprintf('%d\n', mean(tau_p_meas_1(:)))
             % parameter estimation
             for (ite_pe_est = 1:max_pe_est_ite)
                 tau_w_1 = output_parameter_est(y, tau_w_1, p_hat_meas_1, tau_p_meas_1, kappa);
@@ -101,8 +101,8 @@ function [res, input_par, output_par] = gamp_mri_full_x0_r2star_l1_3d_nw_com_com
                 break;
             end
 
-        lambda_x_hat_psi
-        tau_w_1
+        %lambda_x_hat_psi
+        %tau_w_1
 
         fprintf('Ite %d CVG PE: %d\n', ite_pe, cvg_gamp_x_hat_meas_psi)
 
